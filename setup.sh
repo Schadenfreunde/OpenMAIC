@@ -56,12 +56,17 @@ REQUIRED_PNPM="10"
 if ! command -v pnpm &>/dev/null; then
   warn "pnpm is not installed."
   echo ""
-  read -rp "  Install pnpm via corepack? [Y/n] " answer
+  read -rp "  Install pnpm now? [Y/n] " answer
   if [[ "${answer:-Y}" =~ ^[Yy]$ ]]; then
-    info "Enabling corepack..."
-    corepack enable
-    corepack prepare pnpm@latest --activate
-    success "pnpm installed via corepack"
+    if command -v corepack &>/dev/null; then
+      info "Installing pnpm via corepack..."
+      corepack enable
+      corepack prepare pnpm@latest --activate
+    else
+      info "Installing pnpm via npm..."
+      npm install -g pnpm
+    fi
+    success "pnpm installed"
   else
     error "pnpm is required. Install it from https://pnpm.io/installation"
     exit 1
