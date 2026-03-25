@@ -66,6 +66,10 @@ if ! command -v pnpm &>/dev/null; then
       info "Installing pnpm via npm..."
       npm install -g pnpm
     fi
+    # Refresh PATH so the newly installed pnpm is found
+    NPM_BIN="$(npm config get prefix)/bin"
+    export PATH="$NPM_BIN:$PATH"
+    hash -r
     success "pnpm installed"
   else
     error "pnpm is required. Install it from https://pnpm.io/installation"
