@@ -72,12 +72,27 @@ https://github.com/user-attachments/assets/b4ab35ac-f994-46b1-8957-e82fe87ff0e9
 
 ## 🚀 Quick Start
 
-### Prerequisites
+### Automated Setup
+
+The fastest way to get started — checks prerequisites, installs dependencies, and configures your environment interactively:
+
+```bash
+git clone https://github.com/THU-MAIC/OpenMAIC.git
+cd OpenMAIC
+pnpm setup   # or: bash setup.sh
+```
+
+### Manual Setup
+
+<details>
+<summary>Click to expand manual steps</summary>
+
+#### Prerequisites
 
 - **Node.js** >= 20
 - **pnpm** >= 10
 
-### 1. Clone & Install
+#### 1. Clone & Install
 
 ```bash
 git clone https://github.com/THU-MAIC/OpenMAIC.git
@@ -85,7 +100,7 @@ cd OpenMAIC
 pnpm install
 ```
 
-### 2. Configure
+#### 2. Configure
 
 ```bash
 cp .env.example .env.local
@@ -116,13 +131,15 @@ Supported providers: **OpenAI**, **Anthropic**, **Google Gemini**, **DeepSeek**,
 >
 > If you want OpenMAIC server APIs to use Gemini by default, also set `DEFAULT_MODEL=google:gemini-3-flash-preview`.
 
-### 3. Run
+#### 3. Run
 
 ```bash
 pnpm dev
 ```
 
 Open **http://localhost:3000** and start learning!
+
+</details>
 
 ### 4. Build for Production
 
