@@ -186,16 +186,27 @@ export async function POST(req: NextRequest) {
     const HEARTBEAT_INTERVAL_MS = 15_000;
     const stream = new ReadableStream({
       async start(controller) {
+        let cancelled = false;
+
+        // Safe enqueue: swallows errors if controller is already closed/cancelled
+        const safeEnqueue = (data: Uint8Array): boolean => {
+          if (cancelled) return false;
+          try {
+            controller.enqueue(data);
+            return true;
+          } catch {
+            cancelled = true;
+            return false;
+          }
+        };
+
         // Heartbeat: periodically send SSE comments to keep the connection alive.
         let heartbeatTimer: ReturnType<typeof setInterval> | null = null;
         const startHeartbeat = () => {
           stopHeartbeat();
           heartbeatTimer = setInterval(() => {
-            try {
-              controller.enqueue(encoder.encode(`:heartbeat\n\n`));
-            } catch {
-              stopHeartbeat();
-            }
+            safeEnqueue(encoder.encode(`:heartbeat\n\n`));
+            if (cancelled) stopHeartbeat();
           }, HEARTBEAT_INTERVAL_MS);
         };
         const stopHeartbeat = () => {
@@ -216,13 +227,14 @@ export async function POST(req: NextRequest) {
               type: 'lesson-info',
               totalLessons: chunks.length,
             });
-            controller.enqueue(encoder.encode(`data: ${lessonInfoEvent}\n\n`));
+            safeEnqueue(encoder.encode(`data: ${lessonInfoEvent}\n\n`));
           }
 
           let allParsedOutlines: SceneOutline[] = [];
           let lastError: string | undefined;
 
           for (const textChunk of chunks) {
+            if (cancelled) break;
             // Build lesson-specific requirement
             let effectiveRequirement = requirements.requirement;
             if (isMultiLesson) {
@@ -254,7 +266,7 @@ export async function POST(req: NextRequest) {
                 type: 'error',
                 error: 'Prompt template not found',
               });
-              controller.enqueue(encoder.encode(`data: ${errorEvent}\n\n`));
+              safeEnqueue(encoder.encode(`data: ${errorEvent}\n\n`));
               break;
             }
 
@@ -307,7 +319,7 @@ export async function POST(req: NextRequest) {
                       data: enriched,
                       index: allParsedOutlines.length + parsedOutlines.length - 1,
                     });
-                    controller.enqueue(encoder.encode(`data: ${event}\n\n`));
+                    safeEnqueue(encoder.encode(`data: ${event}\n\n`));
                   }
                 }
 
@@ -328,7 +340,8 @@ export async function POST(req: NextRequest) {
                     attempt,
                     maxAttempts: MAX_STREAM_RETRIES + 1,
                   });
-                  controller.enqueue(encoder.encode(`data: ${retryEvent}\n\n`));
+                  safeEnqueue(encoder.encode(`data: ${retryEvent}\n\n`));
+                  if (cancelled) break;
                 }
               } catch (error) {
                 lastError = error instanceof Error ? error.message : String(error);
@@ -343,7 +356,7 @@ export async function POST(req: NextRequest) {
                     attempt,
                     maxAttempts: MAX_STREAM_RETRIES + 1,
                   });
-                  controller.enqueue(encoder.encode(`data: ${retryEvent}\n\n`));
+                  if (!safeEnqueue(encoder.encode(`data: ${retryEvent}\n\n`))) break;
                   continue;
                 }
               }
@@ -371,7 +384,7 @@ export async function POST(req: NextRequest) {
                 data: placeholder,
                 index: allParsedOutlines.length,
               });
-              controller.enqueue(encoder.encode(`data: ${placeholderEvent}\n\n`));
+              safeEnqueue(encoder.encode(`data: ${placeholderEvent}\n\n`));
             }
 
             allParsedOutlines.push(...parsedOutlines);
@@ -394,7 +407,7 @@ export async function POST(req: NextRequest) {
               type: 'done',
               outlines: uniquifiedOutlines,
             });
-            controller.enqueue(encoder.encode(`data: ${doneEvent}\n\n`));
+            safeEnqueue(encoder.encode(`data: ${doneEvent}\n\n`));
           } else {
             // All retries exhausted, no outlines produced
             log.error(
@@ -404,18 +417,23 @@ export async function POST(req: NextRequest) {
               type: 'error',
               error: lastError || 'Failed to generate outlines',
             });
-            controller.enqueue(encoder.encode(`data: ${errorEvent}\n\n`));
+            safeEnqueue(encoder.encode(`data: ${errorEvent}\n\n`));
           }
         } catch (error) {
           const errorEvent = JSON.stringify({
             type: 'error',
             error: error instanceof Error ? error.message : String(error),
           });
-          controller.enqueue(encoder.encode(`data: ${errorEvent}\n\n`));
+          safeEnqueue(encoder.encode(`data: ${errorEvent}\n\n`));
         } finally {
           stopHeartbeat();
-          controller.close();
+          if (!cancelled) {
+            try { controller.close(); } catch { /* already closed */ }
+          }
         }
+      },
+      cancel() {
+        // Client disconnected — stop processing
       },
     });
 
