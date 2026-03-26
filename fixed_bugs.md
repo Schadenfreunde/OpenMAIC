@@ -19,8 +19,8 @@
 - Modified `app/api/generate/scene-outlines-stream/route.ts` — same multi-chunk loop for the streaming flow.
 - Modified `app/generation-preview/page.tsx` — replaced truncation warning with multi-lesson info message.
 - Added `lesson` field to `Scene` and `SceneOutline` types for UI grouping.
-- Added `MAX_LESSONS = 5` and `MAX_TOTAL_SCENES = 40` safety constants to prevent runaway API usage.
+- Added `MAX_LESSONS = 12` and `MAX_TOTAL_SCENES = 100` safety constants to prevent runaway API usage.
 - Added lesson dividers in the scene sidebar (`components/stage/scene-sidebar.tsx`).
 - Added PPTX section headers per lesson in export (`lib/export/use-export-pptx.ts`).
 
-**Safety**: Hard caps ensure the system cannot loop indefinitely — maximum 5 lessons and 40 total scenes. Generation breaks immediately if limits are reached. No retry loops.
+**Safety**: Hard caps ensure the system cannot loop indefinitely — maximum 12 lessons and 100 total scenes. Generation breaks immediately if limits are reached. No retry loops.

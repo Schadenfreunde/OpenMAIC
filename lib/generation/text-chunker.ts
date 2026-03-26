@@ -3,7 +3,7 @@
  * Splits at natural boundaries (headings, paragraphs) to maintain readability.
  */
 
-import { MAX_PDF_CONTENT_CHARS } from '@/lib/constants/generation';
+import { MAX_PDF_CONTENT_CHARS, MAX_LESSONS } from '@/lib/constants/generation';
 
 export interface TextChunk {
   text: string;
@@ -52,7 +52,7 @@ function findSplitPoint(text: string, maxPos: number): number {
 export function chunkText(
   text: string,
   maxChars: number = MAX_PDF_CONTENT_CHARS,
-  maxChunks: number = 5,
+  maxChunks: number = MAX_LESSONS,
 ): TextChunk[] {
   if (!text || text.length <= maxChars) {
     return [{ text, partNumber: 1, totalParts: 1 }];

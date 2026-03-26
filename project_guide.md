@@ -49,8 +49,8 @@ When source material exceeds 50,000 characters, the system automatically splits 
 
 Defined in `lib/constants/generation.ts`:
 - `MAX_PDF_CONTENT_CHARS = 50000` — Character limit per chunk.
-- `MAX_LESSONS = 5`
-- `MAX_TOTAL_SCENES = 40`
+- `MAX_LESSONS = 12`
+- `MAX_TOTAL_SCENES = 100`
 
 ## Export System
 

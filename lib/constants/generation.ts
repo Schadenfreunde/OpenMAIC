@@ -10,5 +10,5 @@ export const MAX_PDF_CONTENT_CHARS = 50000;
 export const MAX_VISION_IMAGES = 20;
 
 // Multi-lesson safety limits
-export const MAX_LESSONS = 5; // Max lessons (text chunks) per classroom
-export const MAX_TOTAL_SCENES = 40; // Max scenes across all lessons
+export const MAX_LESSONS = 12; // Max lessons (text chunks) per classroom
+export const MAX_TOTAL_SCENES = 100; // Max scenes across all lessons
