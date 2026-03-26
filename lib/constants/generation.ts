@@ -8,3 +8,7 @@ export const MAX_PDF_CONTENT_CHARS = 50000;
 
 // Maximum number of images to send as vision content parts
 export const MAX_VISION_IMAGES = 20;
+
+// Multi-lesson safety limits
+export const MAX_LESSONS = 5; // Max lessons (text chunks) per classroom
+export const MAX_TOTAL_SCENES = 40; // Max scenes across all lessons

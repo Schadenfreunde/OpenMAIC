@@ -36,6 +36,10 @@ export async function generateSceneOutlinesFromRequirements(
     videoGenerationEnabled?: boolean;
     researchContext?: string;
     teacherContext?: string;
+    /** Lesson context for multi-lesson classrooms */
+    lessonContext?: { partNumber: number; totalParts: number };
+    /** Starting order value for outlines (for globally unique ordering across lessons) */
+    orderOffset?: number;
   },
 ): Promise<GenerationResult<SceneOutline[]>> {
   // Build available images description for the prompt
@@ -94,10 +98,21 @@ export async function generateSceneOutlinesFromRequirements(
       '**IMPORTANT: Do NOT include any video mediaGenerations (type: "video") in the outlines. Video generation is disabled. Image generation is allowed.**';
   }
 
+  // Prepend lesson context to requirement if multi-lesson
+  let effectiveRequirement = requirements.requirement;
+  if (options?.lessonContext && options.lessonContext.totalParts > 1) {
+    const { partNumber, totalParts } = options.lessonContext;
+    const prefix =
+      requirements.language === 'zh-CN'
+        ? `[第 ${partNumber} 课，共 ${totalParts} 课 — 仅涵盖以下部分的内容] `
+        : `[Lesson ${partNumber} of ${totalParts} — covering only this section of the source material] `;
+    effectiveRequirement = prefix + effectiveRequirement;
+  }
+
   // Use simplified prompt variables
   const prompts = buildPrompt(PROMPT_IDS.REQUIREMENTS_TO_OUTLINES, {
     // New simplified variables
-    requirement: requirements.requirement,
+    requirement: effectiveRequirement,
     language: requirements.language,
     pdfContent: pdfText
       ? pdfText.substring(0, MAX_PDF_CONTENT_CHARS)
@@ -136,12 +151,15 @@ export async function generateSceneOutlinesFromRequirements(
         error: 'Failed to parse scene outlines response',
       };
     }
-    // Ensure IDs, order, and language
+    // Ensure IDs, order, language, and lesson
+    const orderOffset = options?.orderOffset ?? 0;
+    const lessonNumber = options?.lessonContext?.partNumber;
     const enriched = outlines.map((outline, index) => ({
       ...outline,
       id: outline.id || nanoid(),
-      order: index + 1,
+      order: orderOffset + index + 1,
       language: requirements.language,
+      ...(lessonNumber != null ? { lesson: lessonNumber } : {}),
     }));
 
     // Replace sequential gen_img_N/gen_vid_N with globally unique IDs

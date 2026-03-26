@@ -100,6 +100,7 @@ export interface SceneOutline {
   teachingObjective?: string;
   estimatedDuration?: number; // seconds
   order: number;
+  lesson?: number; // Lesson number (1-indexed) for multi-lesson classrooms
   language?: 'zh-CN' | 'en-US'; // Generation language (inherited from requirements)
   // Suggested image IDs (from PDF-extracted images)
   suggestedImageIds?: string[]; // e.g., ["img_1", "img_3"]

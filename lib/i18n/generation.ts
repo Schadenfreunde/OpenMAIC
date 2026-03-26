@@ -47,6 +47,7 @@ export const generationZhCN = {
     classroomReady: '你的个性化AI学习环境已成功生成。',
     aiWorking: 'AI智能体工作中...',
     textTruncated: '文档文本较长，已截取前 {n} 字符用于生成',
+    multiLessonInfo: '文档内容较长，将生成 {n} 节课程',
     imageTruncated: '文档含 {total} 张图片，超出上限 {max} 张，多余图片将仅以文字描述传递',
     // Agent generation
     agentGeneration: '生成课堂角色',
@@ -114,6 +115,7 @@ export const generationEnUS = {
     classroomReady: 'Your personalized AI learning environment has been generated successfully.',
     aiWorking: 'AI Agents Working...',
     textTruncated: 'Document text is long, using first {n} characters for generation',
+    multiLessonInfo: 'Document is large — it will generate {n} lessons',
     imageTruncated:
       '{total} images found, exceeding the {max} image limit. Extra images will use text descriptions only',
     // Agent generation

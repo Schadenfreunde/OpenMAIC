@@ -1232,6 +1232,7 @@ export function createSceneWithActions(
       type: 'slide',
       title: outline.title,
       order: outline.order,
+      ...(outline.lesson != null ? { lesson: outline.lesson } : {}),
       content: {
         type: 'slide',
         canvas: slide,
@@ -1247,6 +1248,7 @@ export function createSceneWithActions(
       type: 'quiz',
       title: outline.title,
       order: outline.order,
+      ...(outline.lesson != null ? { lesson: outline.lesson } : {}),
       content: {
         type: 'quiz',
         questions: content.questions,
@@ -1262,6 +1264,7 @@ export function createSceneWithActions(
       type: 'interactive',
       title: outline.title,
       order: outline.order,
+      ...(outline.lesson != null ? { lesson: outline.lesson } : {}),
       content: {
         type: 'interactive',
         url: '',
@@ -1278,6 +1281,7 @@ export function createSceneWithActions(
       type: 'pbl',
       title: outline.title,
       order: outline.order,
+      ...(outline.lesson != null ? { lesson: outline.lesson } : {}),
       content: {
         type: 'pbl',
         projectConfig: content.projectConfig,

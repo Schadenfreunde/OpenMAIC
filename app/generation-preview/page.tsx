@@ -22,6 +22,7 @@ import {
 import { getCurrentModelConfig } from '@/lib/utils/model-config';
 import { db } from '@/lib/utils/database';
 import { MAX_PDF_CONTENT_CHARS, MAX_VISION_IMAGES } from '@/lib/constants/generation';
+import { chunkText } from '@/lib/generation/text-chunker';
 import { nanoid } from 'nanoid';
 import type { Stage } from '@/lib/types/stage';
 import type { SceneOutline, PdfImage, ImageMapping } from '@/lib/types/generation';
@@ -206,12 +207,7 @@ function GenerationPreviewContent() {
           throw new Error(t('generation.pdfParseFailed'));
         }
 
-        let pdfText = parseResult.data.text as string;
-
-        // Truncate if needed
-        if (pdfText.length > MAX_PDF_CONTENT_CHARS) {
-          pdfText = pdfText.substring(0, MAX_PDF_CONTENT_CHARS);
-        }
+        const pdfText = parseResult.data.text as string;
 
         // Create image metadata and store images
         // Prefer metadata.pdfImages (both parsers now return this)
@@ -275,11 +271,14 @@ function GenerationPreviewContent() {
         setSession(updatedSession);
         sessionStorage.setItem('generationSession', JSON.stringify(updatedSession));
 
-        // Truncation warnings
+        // Document info warnings
         const warnings: string[] = [];
-        if ((parseResult.data.text as string).length > MAX_PDF_CONTENT_CHARS) {
+        const lessonChunks = chunkText(parseResult.data.text as string);
+        if (lessonChunks.length > 1) {
           warnings.push(
-            t('generation.textTruncated').replace('{n}', String(MAX_PDF_CONTENT_CHARS)),
+            t('generation.multiLessonInfo')
+              ?.replace('{n}', String(lessonChunks.length))
+              || `This document will generate ${lessonChunks.length} lessons`,
           );
         }
         if (images.length > MAX_VISION_IMAGES) {

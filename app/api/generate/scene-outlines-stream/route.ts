@@ -22,7 +22,8 @@ import {
   formatTeacherPersonaForPrompt,
 } from '@/lib/generation/generation-pipeline';
 import type { AgentInfo } from '@/lib/generation/generation-pipeline';
-import { MAX_PDF_CONTENT_CHARS, MAX_VISION_IMAGES } from '@/lib/constants/generation';
+import { MAX_PDF_CONTENT_CHARS, MAX_VISION_IMAGES, MAX_TOTAL_SCENES } from '@/lib/constants/generation';
+import { chunkText } from '@/lib/generation/text-chunker';
 import { nanoid } from 'nanoid';
 import type {
   UserRequirements,
@@ -172,26 +173,12 @@ export async function POST(req: NextRequest) {
     // Build teacher context from agents (if available)
     const teacherContext = formatTeacherPersonaForPrompt(agents);
 
-    const prompts = buildPrompt(PROMPT_IDS.REQUIREMENTS_TO_OUTLINES, {
-      requirement: requirements.requirement,
-      language: requirements.language,
-      pdfContent: pdfText
-        ? pdfText.substring(0, MAX_PDF_CONTENT_CHARS)
-        : requirements.language === 'zh-CN'
-          ? '无'
-          : 'None',
-      availableImages: availableImagesText,
-      researchContext: researchContext || (requirements.language === 'zh-CN' ? '无' : 'None'),
-      mediaGenerationPolicy,
-      teacherContext,
-    });
-
-    if (!prompts) {
-      return apiError('INTERNAL_ERROR', 500, 'Prompt template not found');
-    }
+    // Split large documents into chunks for multi-lesson generation
+    const chunks = pdfText ? chunkText(pdfText) : [{ text: pdfText, partNumber: 1, totalParts: 1 }];
+    const isMultiLesson = chunks.length > 1;
 
     log.info(
-      `Generating outlines: "${requirements.requirement.substring(0, 50)}" [model=${modelString}]`,
+      `Generating outlines: "${requirements.requirement.substring(0, 50)}" [model=${modelString}]${isMultiLesson ? ` (${chunks.length} lessons)` : ''}`,
     );
 
     // Create SSE stream with heartbeat to prevent connection timeout
@@ -223,100 +210,160 @@ export async function POST(req: NextRequest) {
         try {
           startHeartbeat();
 
-          const streamParams = visionImages?.length
-            ? {
-                model: languageModel,
-                system: prompts.system,
-                messages: [
-                  {
-                    role: 'user' as const,
-                    content: buildVisionUserContent(prompts.user, visionImages),
-                  },
-                ],
-                maxOutputTokens: modelInfo?.outputWindow,
-              }
-            : {
-                model: languageModel,
-                system: prompts.system,
-                prompt: prompts.user,
-                maxOutputTokens: modelInfo?.outputWindow,
-              };
+          // Send lesson info if multi-lesson
+          if (isMultiLesson) {
+            const lessonInfoEvent = JSON.stringify({
+              type: 'lesson-info',
+              totalLessons: chunks.length,
+            });
+            controller.enqueue(encoder.encode(`data: ${lessonInfoEvent}\n\n`));
+          }
 
-          let parsedOutlines: SceneOutline[] = [];
+          let allParsedOutlines: SceneOutline[] = [];
           let lastError: string | undefined;
 
-          for (let attempt = 1; attempt <= MAX_STREAM_RETRIES + 1; attempt++) {
-            try {
-              const result = streamLLM(streamParams, 'scene-outlines-stream');
+          for (const textChunk of chunks) {
+            // Build lesson-specific requirement
+            let effectiveRequirement = requirements.requirement;
+            if (isMultiLesson) {
+              const prefix =
+                requirements.language === 'zh-CN'
+                  ? `[第 ${textChunk.partNumber} 课，共 ${textChunk.totalParts} 课 — 仅涵盖以下部分的内容] `
+                  : `[Lesson ${textChunk.partNumber} of ${textChunk.totalParts} — covering only this section of the source material] `;
+              effectiveRequirement = prefix + effectiveRequirement;
+            }
 
-              let fullText = '';
-              parsedOutlines = [];
+            const chunkPdfContent = textChunk.text
+              ? textChunk.text.substring(0, MAX_PDF_CONTENT_CHARS)
+              : requirements.language === 'zh-CN'
+                ? '无'
+                : 'None';
 
-              for await (const chunk of result.textStream) {
-                fullText += chunk;
+            const prompts = buildPrompt(PROMPT_IDS.REQUIREMENTS_TO_OUTLINES, {
+              requirement: effectiveRequirement,
+              language: requirements.language,
+              pdfContent: chunkPdfContent,
+              availableImages: availableImagesText,
+              researchContext: researchContext || (requirements.language === 'zh-CN' ? '无' : 'None'),
+              mediaGenerationPolicy,
+              teacherContext,
+            });
 
-                // Try to extract new outlines from the accumulated text
-                const newOutlines = extractNewOutlines(fullText, parsedOutlines.length);
-                for (const outline of newOutlines) {
-                  // Ensure ID and order
-                  const enriched = {
-                    ...outline,
-                    id: outline.id || nanoid(),
-                    order: parsedOutlines.length + 1,
-                  };
-                  parsedOutlines.push(enriched);
+            if (!prompts) {
+              const errorEvent = JSON.stringify({
+                type: 'error',
+                error: 'Prompt template not found',
+              });
+              controller.enqueue(encoder.encode(`data: ${errorEvent}\n\n`));
+              break;
+            }
 
-                  const event = JSON.stringify({
-                    type: 'outline',
-                    data: enriched,
-                    index: parsedOutlines.length - 1,
+            const streamParams = visionImages?.length
+              ? {
+                  model: languageModel,
+                  system: prompts.system,
+                  messages: [
+                    {
+                      role: 'user' as const,
+                      content: buildVisionUserContent(prompts.user, visionImages),
+                    },
+                  ],
+                  maxOutputTokens: modelInfo?.outputWindow,
+                }
+              : {
+                  model: languageModel,
+                  system: prompts.system,
+                  prompt: prompts.user,
+                  maxOutputTokens: modelInfo?.outputWindow,
+                };
+
+            let parsedOutlines: SceneOutline[] = [];
+
+            for (let attempt = 1; attempt <= MAX_STREAM_RETRIES + 1; attempt++) {
+              try {
+                const result = streamLLM(streamParams, 'scene-outlines-stream');
+
+                let fullText = '';
+                parsedOutlines = [];
+                const orderOffset = allParsedOutlines.length;
+
+                for await (const chunk of result.textStream) {
+                  fullText += chunk;
+
+                  // Try to extract new outlines from the accumulated text
+                  const newOutlines = extractNewOutlines(fullText, parsedOutlines.length);
+                  for (const outline of newOutlines) {
+                    // Ensure ID, order (globally unique), and lesson
+                    const enriched = {
+                      ...outline,
+                      id: outline.id || nanoid(),
+                      order: orderOffset + parsedOutlines.length + 1,
+                      ...(isMultiLesson ? { lesson: textChunk.partNumber } : {}),
+                    };
+                    parsedOutlines.push(enriched);
+
+                    const event = JSON.stringify({
+                      type: 'outline',
+                      data: enriched,
+                      index: allParsedOutlines.length + parsedOutlines.length - 1,
+                    });
+                    controller.enqueue(encoder.encode(`data: ${event}\n\n`));
+                  }
+                }
+
+                // Validate: got outlines?
+                if (parsedOutlines.length > 0) break;
+
+                // Empty result — retry if we have attempts left
+                lastError = fullText.trim()
+                  ? 'LLM response could not be parsed into outlines'
+                  : 'LLM returned empty response';
+
+                if (attempt <= MAX_STREAM_RETRIES) {
+                  log.warn(
+                    `Empty outlines (attempt ${attempt}/${MAX_STREAM_RETRIES + 1}), retrying...`,
+                  );
+                  const retryEvent = JSON.stringify({
+                    type: 'retry',
+                    attempt,
+                    maxAttempts: MAX_STREAM_RETRIES + 1,
                   });
-                  controller.enqueue(encoder.encode(`data: ${event}\n\n`));
+                  controller.enqueue(encoder.encode(`data: ${retryEvent}\n\n`));
+                }
+              } catch (error) {
+                lastError = error instanceof Error ? error.message : String(error);
+
+                if (attempt <= MAX_STREAM_RETRIES) {
+                  log.warn(
+                    `Stream error (attempt ${attempt}/${MAX_STREAM_RETRIES + 1}), retrying...`,
+                    error,
+                  );
+                  const retryEvent = JSON.stringify({
+                    type: 'retry',
+                    attempt,
+                    maxAttempts: MAX_STREAM_RETRIES + 1,
+                  });
+                  controller.enqueue(encoder.encode(`data: ${retryEvent}\n\n`));
+                  continue;
                 }
               }
+            }
 
-              // Validate: got outlines?
-              if (parsedOutlines.length > 0) break;
+            allParsedOutlines.push(...parsedOutlines);
 
-              // Empty result — retry if we have attempts left
-              lastError = fullText.trim()
-                ? 'LLM response could not be parsed into outlines'
-                : 'LLM returned empty response';
-
-              if (attempt <= MAX_STREAM_RETRIES) {
-                log.warn(
-                  `Empty outlines (attempt ${attempt}/${MAX_STREAM_RETRIES + 1}), retrying...`,
-                );
-                // Notify client a retry is happening
-                const retryEvent = JSON.stringify({
-                  type: 'retry',
-                  attempt,
-                  maxAttempts: MAX_STREAM_RETRIES + 1,
-                });
-                controller.enqueue(encoder.encode(`data: ${retryEvent}\n\n`));
-              }
-            } catch (error) {
-              lastError = error instanceof Error ? error.message : String(error);
-
-              if (attempt <= MAX_STREAM_RETRIES) {
-                log.warn(
-                  `Stream error (attempt ${attempt}/${MAX_STREAM_RETRIES + 1}), retrying...`,
-                  error,
-                );
-                const retryEvent = JSON.stringify({
-                  type: 'retry',
-                  attempt,
-                  maxAttempts: MAX_STREAM_RETRIES + 1,
-                });
-                controller.enqueue(encoder.encode(`data: ${retryEvent}\n\n`));
-                continue;
-              }
+            // Safety: stop if we've hit the scene cap
+            if (allParsedOutlines.length >= MAX_TOTAL_SCENES) {
+              log.warn(`Hit MAX_TOTAL_SCENES (${MAX_TOTAL_SCENES}), stopping at lesson ${textChunk.partNumber}`);
+              break;
             }
           }
 
-          if (parsedOutlines.length > 0) {
+          // Trim to MAX_TOTAL_SCENES
+          const finalOutlines = allParsedOutlines.slice(0, MAX_TOTAL_SCENES);
+
+          if (finalOutlines.length > 0) {
             // Replace sequential gen_img_N/gen_vid_N with globally unique IDs
-            const uniquifiedOutlines = uniquifyMediaElementIds(parsedOutlines);
+            const uniquifiedOutlines = uniquifyMediaElementIds(finalOutlines);
             // Send done event with all outlines
             const doneEvent = JSON.stringify({
               type: 'done',
@@ -326,7 +373,7 @@ export async function POST(req: NextRequest) {
           } else {
             // All retries exhausted, no outlines produced
             log.error(
-              `Outline generation failed after ${MAX_STREAM_RETRIES + 1} attempts: ${lastError}`,
+              `Outline generation failed after all attempts: ${lastError}`,
             );
             const errorEvent = JSON.stringify({
               type: 'error',

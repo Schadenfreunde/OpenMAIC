@@ -374,12 +374,25 @@ async function buildPptxBlob(
   else if (viewportRatio === 0.75) pptx.layout = 'LAYOUT_4x3';
   else pptx.layout = 'LAYOUT_16x9';
 
+  // Detect multi-lesson and add section headers
+  const isMultiLesson = slideScenes.some((s) => s.lesson != null && s.lesson > 1);
+  let currentLesson: number | undefined;
+
   for (let slideIdx = 0; slideIdx < slides.length; slideIdx++) {
     const slide = slides[slideIdx];
-    const pptxSlide = pptx.addSlide();
+    const scene = slideScenes[slideIdx];
+
+    // Add PPTX section for each new lesson
+    if (isMultiLesson && scene?.lesson != null && scene.lesson !== currentLesson) {
+      currentLesson = scene.lesson;
+      pptx.addSection({ title: `Lesson ${currentLesson}` });
+    }
+
+    const pptxSlide = pptx.addSlide({
+      ...(isMultiLesson && currentLesson ? { sectionTitle: `Lesson ${currentLesson}` } : {}),
+    });
 
     // ── Speaker Notes ──
-    const scene = slideScenes[slideIdx];
     if (scene) {
       const notes = buildSpeakerNotes(scene);
       if (notes) pptxSlide.addNotes(notes);

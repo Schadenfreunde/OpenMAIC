@@ -62,6 +62,7 @@ export function createSceneAPI(store: StageStore) {
           type: params.type,
           title: params.title,
           order,
+          ...(params.lesson != null ? { lesson: params.lesson } : {}),
           content,
           actions: params.actions,
           createdAt: Date.now(),

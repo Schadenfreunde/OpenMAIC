@@ -27,6 +27,7 @@ export interface CreateSceneParams {
   title: string;
   content?: Partial<SceneContent>;
   order?: number;
+  lesson?: number;
   actions?: Action[];
 }
 

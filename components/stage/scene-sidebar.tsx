@@ -146,10 +146,24 @@ export function SceneSidebar({
             const Icon = getSceneTypeIcon(scene.type);
             const isSlide = scene.type === 'slide';
             const slideContent = isSlide ? (scene.content as SlideContent) : null;
+            const prevScene = index > 0 ? scenes[index - 1] : null;
+            const showLessonDivider =
+              scene.lesson != null &&
+              scene.lesson > 0 &&
+              (index === 0 ? scene.lesson > 1 : scene.lesson !== prevScene?.lesson);
 
             return (
+              <div key={scene.id}>
+              {showLessonDivider && (
+                <div className="flex items-center gap-2 px-2 pt-2 pb-1">
+                  <div className="flex-1 h-px bg-purple-200 dark:bg-purple-800" />
+                  <span className="text-[10px] font-bold text-purple-500 dark:text-purple-400 uppercase tracking-wider whitespace-nowrap">
+                    {t('stage.lessonDivider').replace('{n}', String(scene.lesson))}
+                  </span>
+                  <div className="flex-1 h-px bg-purple-200 dark:bg-purple-800" />
+                </div>
+              )}
               <div
-                key={scene.id}
                 data-testid="scene-item"
                 onClick={() => {
                   if (onSceneSelect) {
@@ -319,6 +333,7 @@ export function SceneSidebar({
                     )}
                   </div>
                 </div>
+              </div>
               </div>
             );
           })}

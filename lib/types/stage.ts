@@ -53,6 +53,9 @@ export interface Scene {
     directorPrompt?: string; // Optional custom director instructions
   };
 
+  // Multi-lesson grouping (1-indexed lesson number)
+  lesson?: number;
+
   // Metadata
   createdAt?: number;
   updatedAt?: number;

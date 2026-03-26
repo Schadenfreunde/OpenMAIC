@@ -9,6 +9,7 @@ export const stageZhCN = {
     generatingNextPage: '场景正在生成，请稍候...',
     fullscreen: '全屏',
     exitFullscreen: '退出全屏',
+    lessonDivider: '第 {n} 课',
   },
   whiteboard: {
     title: '互动白板',
@@ -159,6 +160,7 @@ export const stageEnUS = {
     generatingNextPage: 'Scene is being generated, please wait...',
     fullscreen: 'Fullscreen',
     exitFullscreen: 'Exit Fullscreen',
+    lessonDivider: 'Lesson {n}',
   },
   whiteboard: {
     title: 'Interactive Whiteboard',

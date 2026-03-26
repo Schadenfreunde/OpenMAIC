@@ -11,8 +11,11 @@ import {
   generateSceneActions,
   generateSceneContent,
 } from '@/lib/generation/scene-generator';
+import { chunkText } from '@/lib/generation/text-chunker';
+import { MAX_TOTAL_SCENES } from '@/lib/constants/generation';
 import type { AICallFn } from '@/lib/generation/pipeline-types';
 import type { AgentInfo } from '@/lib/generation/pipeline-types';
+import type { SceneOutline } from '@/lib/types/generation';
 import { formatTeacherPersonaForPrompt } from '@/lib/generation/prompt-formatters';
 import { getDefaultAgents } from '@/lib/orchestration/registry/store';
 import { createLogger } from '@/lib/logger';
@@ -261,27 +264,65 @@ export async function generateClassroom(
     scenesGenerated: 0,
   });
 
-  const outlinesResult = await generateSceneOutlinesFromRequirements(
-    requirements,
-    pdfText,
-    undefined,
-    aiCall,
-    undefined,
-    {
-      imageGenerationEnabled: input.enableImageGeneration,
-      videoGenerationEnabled: input.enableVideoGeneration,
-      researchContext,
-      teacherContext,
-    },
-  );
-
-  if (!outlinesResult.success || !outlinesResult.data) {
-    log.error('Failed to generate outlines:', outlinesResult.error);
-    throw new Error(outlinesResult.error || 'Failed to generate scene outlines');
+  // Split large documents into chunks for multi-lesson generation
+  const chunks = pdfText ? chunkText(pdfText) : [{ text: pdfText, partNumber: 1, totalParts: 1 }];
+  const isMultiLesson = chunks.length > 1;
+  if (isMultiLesson) {
+    log.info(`Document split into ${chunks.length} lessons (${pdfText!.length} chars total)`);
   }
 
-  const outlines = outlinesResult.data;
-  log.info(`Generated ${outlines.length} scene outlines`);
+  const allOutlines: SceneOutline[] = [];
+  for (const chunk of chunks) {
+    const lessonContext = isMultiLesson
+      ? { partNumber: chunk.partNumber, totalParts: chunk.totalParts }
+      : undefined;
+
+    const outlinesResult = await generateSceneOutlinesFromRequirements(
+      requirements,
+      chunk.text || undefined,
+      undefined,
+      aiCall,
+      undefined,
+      {
+        imageGenerationEnabled: input.enableImageGeneration,
+        videoGenerationEnabled: input.enableVideoGeneration,
+        researchContext,
+        teacherContext,
+        lessonContext,
+        orderOffset: allOutlines.length,
+      },
+    );
+
+    if (!outlinesResult.success || !outlinesResult.data) {
+      log.error(`Failed to generate outlines for lesson ${chunk.partNumber}:`, outlinesResult.error);
+      throw new Error(outlinesResult.error || 'Failed to generate scene outlines');
+    }
+
+    allOutlines.push(...outlinesResult.data);
+    log.info(`Lesson ${chunk.partNumber}: ${outlinesResult.data.length} outlines (total: ${allOutlines.length})`);
+
+    // Safety: stop if we've hit the scene cap
+    if (allOutlines.length >= MAX_TOTAL_SCENES) {
+      log.warn(`Hit MAX_TOTAL_SCENES (${MAX_TOTAL_SCENES}), stopping outline generation at lesson ${chunk.partNumber}`);
+      break;
+    }
+
+    await options.onProgress?.({
+      step: 'generating_outlines',
+      progress: 15 + Math.floor((chunk.partNumber / chunks.length) * 15),
+      message: isMultiLesson
+        ? `Generated outlines for lesson ${chunk.partNumber} of ${chunks.length}`
+        : 'Generating scene outlines',
+      scenesGenerated: 0,
+    });
+  }
+
+  // Trim to MAX_TOTAL_SCENES if needed
+  const outlines = allOutlines.slice(0, MAX_TOTAL_SCENES);
+  if (allOutlines.length > MAX_TOTAL_SCENES) {
+    log.warn(`Trimmed outlines from ${allOutlines.length} to ${MAX_TOTAL_SCENES}`);
+  }
+  log.info(`Generated ${outlines.length} total scene outlines${isMultiLesson ? ` across ${chunks.length} lessons` : ''}`);
 
   await options.onProgress?.({
     step: 'generating_outlines',
