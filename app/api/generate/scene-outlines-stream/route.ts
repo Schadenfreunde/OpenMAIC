@@ -349,6 +349,31 @@ export async function POST(req: NextRequest) {
               }
             }
 
+            // If all retries exhausted with no outlines, insert a placeholder
+            if (parsedOutlines.length === 0 && isMultiLesson) {
+              log.warn(`Lesson ${textChunk.partNumber}: all retries exhausted, inserting placeholder`);
+              const placeholder: SceneOutline = {
+                id: nanoid(),
+                type: 'slide',
+                title: requirements.language === 'zh-CN'
+                  ? `第 ${textChunk.partNumber} 课 — 生成失败`
+                  : `Lesson ${textChunk.partNumber} — Generation Failed`,
+                description: requirements.language === 'zh-CN'
+                  ? '此课程的内容生成失败，请重试。'
+                  : 'Content generation failed for this lesson. Please retry.',
+                keyPoints: [],
+                order: allParsedOutlines.length + 1,
+                lesson: textChunk.partNumber,
+              };
+              parsedOutlines.push(placeholder);
+              const placeholderEvent = JSON.stringify({
+                type: 'outline',
+                data: placeholder,
+                index: allParsedOutlines.length,
+              });
+              controller.enqueue(encoder.encode(`data: ${placeholderEvent}\n\n`));
+            }
+
             allParsedOutlines.push(...parsedOutlines);
 
             // Safety: stop if we've hit the scene cap

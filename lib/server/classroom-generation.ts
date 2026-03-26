@@ -12,7 +12,7 @@ import {
   generateSceneContent,
 } from '@/lib/generation/scene-generator';
 import { chunkText } from '@/lib/generation/text-chunker';
-import { MAX_TOTAL_SCENES } from '@/lib/constants/generation';
+import { MAX_TOTAL_SCENES, MAX_PARALLEL_LESSONS } from '@/lib/constants/generation';
 import type { AICallFn } from '@/lib/generation/pipeline-types';
 import type { AgentInfo } from '@/lib/generation/pipeline-types';
 import type { SceneOutline } from '@/lib/types/generation';
@@ -271,56 +271,104 @@ export async function generateClassroom(
     log.info(`Document split into ${chunks.length} lessons (${pdfText!.length} chars total)`);
   }
 
-  const allOutlines: SceneOutline[] = [];
-  for (const chunk of chunks) {
+  // Generate outlines for a single chunk (with one retry on failure)
+  async function generateLessonOutlines(chunk: typeof chunks[number]): Promise<{
+    partNumber: number;
+    outlines: SceneOutline[];
+    failed: boolean;
+  }> {
     const lessonContext = isMultiLesson
       ? { partNumber: chunk.partNumber, totalParts: chunk.totalParts }
       : undefined;
 
-    const outlinesResult = await generateSceneOutlinesFromRequirements(
-      requirements,
-      chunk.text || undefined,
-      undefined,
-      aiCall,
-      undefined,
-      {
-        imageGenerationEnabled: input.enableImageGeneration,
-        videoGenerationEnabled: input.enableVideoGeneration,
-        researchContext,
-        teacherContext,
-        lessonContext,
-        orderOffset: allOutlines.length,
-      },
-    );
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      const outlinesResult = await generateSceneOutlinesFromRequirements(
+        requirements,
+        chunk.text || undefined,
+        undefined,
+        aiCall,
+        undefined,
+        {
+          imageGenerationEnabled: input.enableImageGeneration,
+          videoGenerationEnabled: input.enableVideoGeneration,
+          researchContext,
+          teacherContext,
+          lessonContext,
+          orderOffset: 0, // temporary, renumbered after all lessons complete
+        },
+      );
 
-    if (!outlinesResult.success || !outlinesResult.data) {
-      log.error(`Failed to generate outlines for lesson ${chunk.partNumber}:`, outlinesResult.error);
-      throw new Error(outlinesResult.error || 'Failed to generate scene outlines');
+      if (outlinesResult.success && outlinesResult.data && outlinesResult.data.length > 0) {
+        return { partNumber: chunk.partNumber, outlines: outlinesResult.data, failed: false };
+      }
+
+      if (attempt === 1) {
+        log.warn(`Lesson ${chunk.partNumber} outline generation failed (attempt 1), retrying...`);
+      } else {
+        log.error(`Lesson ${chunk.partNumber} outline generation failed after retry: ${outlinesResult.error}`);
+      }
     }
 
-    allOutlines.push(...outlinesResult.data);
-    log.info(`Lesson ${chunk.partNumber}: ${outlinesResult.data.length} outlines (total: ${allOutlines.length})`);
+    // Both attempts failed — return placeholder
+    return {
+      partNumber: chunk.partNumber,
+      outlines: [{
+        id: nanoid(),
+        type: 'slide' as const,
+        title: lang === 'zh-CN'
+          ? `第 ${chunk.partNumber} 课 — 生成失败`
+          : `Lesson ${chunk.partNumber} — Generation Failed`,
+        description: lang === 'zh-CN'
+          ? '此课程的内容生成失败，请重试。'
+          : 'Content generation failed for this lesson. Please retry.',
+        keyPoints: [],
+        order: 0,
+        lesson: chunk.partNumber,
+      }],
+      failed: true,
+    };
+  }
 
-    // Safety: stop if we've hit the scene cap
-    if (allOutlines.length >= MAX_TOTAL_SCENES) {
-      log.warn(`Hit MAX_TOTAL_SCENES (${MAX_TOTAL_SCENES}), stopping outline generation at lesson ${chunk.partNumber}`);
-      break;
-    }
+  // Generate outlines in parallel (batches of MAX_PARALLEL_LESSONS)
+  const lessonResults: Awaited<ReturnType<typeof generateLessonOutlines>>[] = [];
+  for (let batchStart = 0; batchStart < chunks.length; batchStart += MAX_PARALLEL_LESSONS) {
+    const batch = chunks.slice(batchStart, batchStart + MAX_PARALLEL_LESSONS);
+    const batchResults = await Promise.all(batch.map(generateLessonOutlines));
+    lessonResults.push(...batchResults);
 
     await options.onProgress?.({
       step: 'generating_outlines',
-      progress: 15 + Math.floor((chunk.partNumber / chunks.length) * 15),
+      progress: 15 + Math.floor(((batchStart + batch.length) / chunks.length) * 15),
       message: isMultiLesson
-        ? `Generated outlines for lesson ${chunk.partNumber} of ${chunks.length}`
+        ? `Generated outlines for ${Math.min(batchStart + batch.length, chunks.length)} of ${chunks.length} lessons`
         : 'Generating scene outlines',
       scenesGenerated: 0,
     });
+  }
+
+  // Sort by lesson order and renumber with globally unique orders
+  lessonResults.sort((a, b) => a.partNumber - b.partNumber);
+  const allOutlines: SceneOutline[] = [];
+  let orderCounter = 0;
+  for (const result of lessonResults) {
+    for (const outline of result.outlines) {
+      orderCounter++;
+      outline.order = orderCounter;
+      if (isMultiLesson) {
+        outline.lesson = result.partNumber;
+      }
+    }
+    allOutlines.push(...result.outlines);
   }
 
   // Trim to MAX_TOTAL_SCENES if needed
   const outlines = allOutlines.slice(0, MAX_TOTAL_SCENES);
   if (allOutlines.length > MAX_TOTAL_SCENES) {
     log.warn(`Trimmed outlines from ${allOutlines.length} to ${MAX_TOTAL_SCENES}`);
+  }
+  const failedLessons = lessonResults.filter((r) => r.failed).map((r) => r.partNumber);
+  if (failedLessons.length > 0) {
+    log.warn(`Lessons with placeholder (generation failed): ${failedLessons.join(', ')}`);
   }
   log.info(`Generated ${outlines.length} total scene outlines${isMultiLesson ? ` across ${chunks.length} lessons` : ''}`);
 
@@ -349,47 +397,56 @@ export async function generateClassroom(
   log.info('Stage 2: Generating scene content and actions...');
   let generatedScenes = 0;
 
-  for (const [index, outline] of outlines.entries()) {
-    const safeOutline = applyOutlineFallbacks(outline, true);
-    const progressStart = 30 + Math.floor((index / Math.max(outlines.length, 1)) * 60);
+  // Generate scenes in parallel batches
+  for (let batchStart = 0; batchStart < outlines.length; batchStart += MAX_PARALLEL_LESSONS) {
+    const batch = outlines.slice(batchStart, batchStart + MAX_PARALLEL_LESSONS);
 
     await options.onProgress?.({
       step: 'generating_scenes',
-      progress: Math.max(progressStart, 31),
-      message: `Generating scene ${index + 1}/${outlines.length}: ${safeOutline.title}`,
+      progress: Math.max(30 + Math.floor((batchStart / Math.max(outlines.length, 1)) * 60), 31),
+      message: `Generating scenes ${batchStart + 1}-${batchStart + batch.length} of ${outlines.length}`,
       scenesGenerated: generatedScenes,
       totalScenes: outlines.length,
     });
 
-    const content = await generateSceneContent(
-      safeOutline,
-      aiCall,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      agents,
+    const batchResults = await Promise.all(
+      batch.map(async (outline) => {
+        const safeOutline = applyOutlineFallbacks(outline, true);
+        const content = await generateSceneContent(
+          safeOutline,
+          aiCall,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          agents,
+        );
+        if (!content) {
+          log.warn(`Skipping scene "${safeOutline.title}" — content generation failed`);
+          return null;
+        }
+
+        const actions = await generateSceneActions(safeOutline, content, aiCall, undefined, agents);
+        log.info(`Scene "${safeOutline.title}": ${actions.length} actions`);
+        return { outline: safeOutline, content, actions };
+      }),
     );
-    if (!content) {
-      log.warn(`Skipping scene "${safeOutline.title}" — content generation failed`);
-      continue;
+
+    // Create scenes in order (store mutation is fast and synchronous)
+    for (const result of batchResults) {
+      if (!result) continue;
+      const sceneId = createSceneWithActions(result.outline, result.content, result.actions, api);
+      if (sceneId) {
+        generatedScenes += 1;
+      } else {
+        log.warn(`Skipping scene "${result.outline.title}" — scene creation failed`);
+      }
     }
 
-    const actions = await generateSceneActions(safeOutline, content, aiCall, undefined, agents);
-    log.info(`Scene "${safeOutline.title}": ${actions.length} actions`);
-
-    const sceneId = createSceneWithActions(safeOutline, content, actions, api);
-    if (!sceneId) {
-      log.warn(`Skipping scene "${safeOutline.title}" — scene creation failed`);
-      continue;
-    }
-
-    generatedScenes += 1;
-    const progressEnd = 30 + Math.floor(((index + 1) / Math.max(outlines.length, 1)) * 60);
     await options.onProgress?.({
       step: 'generating_scenes',
-      progress: Math.min(progressEnd, 90),
+      progress: Math.min(30 + Math.floor(((batchStart + batch.length) / Math.max(outlines.length, 1)) * 60), 90),
       message: `Generated ${generatedScenes}/${outlines.length} scenes`,
       scenesGenerated: generatedScenes,
       totalScenes: outlines.length,

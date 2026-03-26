@@ -10,6 +10,7 @@ export const stageZhCN = {
     fullscreen: '全屏',
     exitFullscreen: '退出全屏',
     lessonDivider: '第 {n} 课',
+    lessonSkipped: '第 {n} 课 — 生成失败',
   },
   whiteboard: {
     title: '互动白板',
@@ -161,6 +162,7 @@ export const stageEnUS = {
     fullscreen: 'Fullscreen',
     exitFullscreen: 'Exit Fullscreen',
     lessonDivider: 'Lesson {n}',
+    lessonSkipped: 'Lesson {n} — Generation Failed',
   },
   whiteboard: {
     title: 'Interactive Whiteboard',
