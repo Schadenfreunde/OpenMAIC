@@ -122,8 +122,11 @@ export async function generateSceneOutlinesFromRequirements(
     availableImages: availableImagesText,
     userProfile: userProfileText,
     mediaGenerationPolicy,
+    // Cap research context when PDF content is large to avoid overwhelming the LLM
     researchContext:
-      options?.researchContext || (requirements.language === 'zh-CN' ? '无' : 'None'),
+      (pdfText && pdfText.length > 10000
+        ? (options?.researchContext || '').substring(0, 2000)
+        : options?.researchContext) || (requirements.language === 'zh-CN' ? '无' : 'None'),
     // Server-side generation populates this via options; client-side populates via formatTeacherPersonaForPrompt
     teacherContext: options?.teacherContext || '',
   });

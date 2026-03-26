@@ -347,11 +347,15 @@ export function streamLLM<T extends StreamTextParams>(
   params: T,
   source: string,
   thinking?: ThinkingConfig,
+  abortSignal?: AbortSignal,
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
 ): StreamTextResult<any, any> {
   // Resolve effective thinking config and wrap in thinkingContext
   const effectiveThinking = thinking ?? getGlobalThinkingConfig();
-  const injectedParams = injectProviderOptions(params, effectiveThinking);
+  const injectedParams = injectProviderOptions(
+    abortSignal ? { ...params, abortSignal } : params,
+    effectiveThinking,
+  );
   const result = thinkingContext.run(effectiveThinking, () => streamText(injectedParams));
 
   return result;

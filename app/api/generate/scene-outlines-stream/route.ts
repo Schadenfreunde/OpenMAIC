@@ -36,7 +36,7 @@ import { createLogger } from '@/lib/logger';
 import { resolveModelFromHeaders } from '@/lib/server/resolve-model';
 const log = createLogger('Outlines Stream');
 
-export const maxDuration = 300;
+export const maxDuration = 600;
 
 /**
  * Incremental JSON array parser.
@@ -184,9 +184,17 @@ export async function POST(req: NextRequest) {
     // Create SSE stream with heartbeat to prevent connection timeout
     const encoder = new TextEncoder();
     const HEARTBEAT_INTERVAL_MS = 15_000;
+    let cancelled = false;
+    const abortController = new AbortController();
+
+    // Cap research context when PDF content is large to avoid overwhelming the LLM
+    const cappedResearchContext =
+      pdfText && pdfText.length > 10000
+        ? (researchContext || '').substring(0, 2000)
+        : researchContext;
+
     const stream = new ReadableStream({
       async start(controller) {
-        let cancelled = false;
 
         // Safe enqueue: swallows errors if controller is already closed/cancelled
         const safeEnqueue = (data: Uint8Array): boolean => {
@@ -256,7 +264,7 @@ export async function POST(req: NextRequest) {
               language: requirements.language,
               pdfContent: chunkPdfContent,
               availableImages: availableImagesText,
-              researchContext: researchContext || (requirements.language === 'zh-CN' ? '无' : 'None'),
+              researchContext: cappedResearchContext || (requirements.language === 'zh-CN' ? '无' : 'None'),
               mediaGenerationPolicy,
               teacherContext,
             });
@@ -293,13 +301,14 @@ export async function POST(req: NextRequest) {
 
             for (let attempt = 1; attempt <= MAX_STREAM_RETRIES + 1; attempt++) {
               try {
-                const result = streamLLM(streamParams, 'scene-outlines-stream');
+                const result = streamLLM(streamParams, 'scene-outlines-stream', undefined, abortController.signal);
 
                 let fullText = '';
                 parsedOutlines = [];
                 const orderOffset = allParsedOutlines.length;
 
                 for await (const chunk of result.textStream) {
+                  if (cancelled) break;
                   fullText += chunk;
 
                   // Try to extract new outlines from the accumulated text
@@ -433,7 +442,9 @@ export async function POST(req: NextRequest) {
         }
       },
       cancel() {
-        // Client disconnected — stop processing
+        // Client disconnected — stop LLM calls and processing
+        cancelled = true;
+        try { abortController.abort(); } catch { /* already aborted */ }
       },
     });
 
