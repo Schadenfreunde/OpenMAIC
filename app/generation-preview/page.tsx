@@ -574,8 +574,10 @@ function GenerationPreviewContent() {
                           collected.push(evt.data);
                           setStreamingOutlines([...collected]);
                         } else if (evt.type === 'retry') {
-                          collected.length = 0;
-                          setStreamingOutlines([]);
+                          // Truncate only the current lesson's partial outlines, not prior lessons'
+                          const checkpoint = typeof evt.lessonStartIndex === 'number' ? evt.lessonStartIndex : 0;
+                          collected.length = checkpoint;
+                          setStreamingOutlines([...collected]);
                           setStatusMessage(t('generation.outlineRetrying'));
                         } else if (evt.type === 'done') {
                           resolve(evt.outlines || collected);

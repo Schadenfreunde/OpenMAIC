@@ -206,6 +206,24 @@ export async function generateClassroom(
     return result.text;
   };
 
+  // Outline generation uses a variant with thinking disabled (structured JSON output, not reasoning)
+  const aiCallNoThinking: AICallFn = async (systemPrompt, userPrompt, _images) => {
+    const result = await callLLM(
+      {
+        model: languageModel,
+        messages: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: userPrompt },
+        ],
+        maxOutputTokens: modelInfo?.outputWindow,
+      },
+      'generate-classroom-outlines',
+      undefined,
+      { enabled: false },
+    );
+    return result.text;
+  };
+
   const lang = normalizeLanguage(input.language);
   const requirements: UserRequirements = {
     requirement,
@@ -286,7 +304,7 @@ export async function generateClassroom(
         requirements,
         chunk.text || undefined,
         undefined,
-        aiCall,
+        aiCallNoThinking,
         undefined,
         {
           imageGenerationEnabled: input.enableImageGeneration,

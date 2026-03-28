@@ -225,6 +225,7 @@ export async function POST(req: NextRequest) {
         };
 
         const MAX_STREAM_RETRIES = 2;
+        const PER_LESSON_TIMEOUT_MS = 120_000; // 2 minutes per attempt
 
         try {
           startHeartbeat();
@@ -301,12 +302,25 @@ export async function POST(req: NextRequest) {
 
             for (let attempt = 1; attempt <= MAX_STREAM_RETRIES + 1; attempt++) {
               try {
-                const result = streamLLM(streamParams, 'scene-outlines-stream', undefined, abortController.signal);
+                // Per-attempt timeout: abort if LLM stalls
+                const attemptAbort = new AbortController();
+                const timeoutId = setTimeout(() => attemptAbort.abort(), PER_LESSON_TIMEOUT_MS);
+                // Combine with global abort (client disconnect)
+                const onGlobalAbort = () => attemptAbort.abort();
+                abortController.signal.addEventListener('abort', onGlobalAbort, { once: true });
+
+                const result = streamLLM(
+                  streamParams,
+                  'scene-outlines-stream',
+                  { enabled: false }, // Disable thinking — outline generation is structured output, not reasoning
+                  attemptAbort.signal,
+                );
 
                 let fullText = '';
                 parsedOutlines = [];
                 const orderOffset = allParsedOutlines.length;
 
+                try {
                 for await (const chunk of result.textStream) {
                   if (cancelled) break;
                   fullText += chunk;
@@ -331,6 +345,10 @@ export async function POST(req: NextRequest) {
                     safeEnqueue(encoder.encode(`data: ${event}\n\n`));
                   }
                 }
+                } finally {
+                  clearTimeout(timeoutId);
+                  abortController.signal.removeEventListener('abort', onGlobalAbort);
+                }
 
                 // Validate: got outlines?
                 if (parsedOutlines.length > 0) break;
@@ -348,6 +366,7 @@ export async function POST(req: NextRequest) {
                     type: 'retry',
                     attempt,
                     maxAttempts: MAX_STREAM_RETRIES + 1,
+                    lessonStartIndex: allParsedOutlines.length,
                   });
                   safeEnqueue(encoder.encode(`data: ${retryEvent}\n\n`));
                   if (cancelled) break;
@@ -364,6 +383,7 @@ export async function POST(req: NextRequest) {
                     type: 'retry',
                     attempt,
                     maxAttempts: MAX_STREAM_RETRIES + 1,
+                    lessonStartIndex: allParsedOutlines.length,
                   });
                   if (!safeEnqueue(encoder.encode(`data: ${retryEvent}\n\n`))) break;
                   continue;
