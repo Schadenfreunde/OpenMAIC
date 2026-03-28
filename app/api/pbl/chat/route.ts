@@ -47,6 +47,11 @@ export async function POST(req: NextRequest) {
       }
     }
 
+    // Cap issue context to prevent system prompt bloat on large issues
+    if (issueContext.length > 2000) {
+      issueContext = issueContext.substring(0, 2000) + '\n[... truncated]';
+    }
+
     const recentContext =
       recentMessages.length > 0
         ? `\n\n## Recent Conversation\n${recentMessages
@@ -64,6 +69,8 @@ export async function POST(req: NextRequest) {
         prompt: message,
       },
       'pbl-chat',
+      undefined,
+      { enabled: false }, // conversational response — no reasoning needed
     );
 
     return apiSuccess({ message: result.text, agentName: agent.name });

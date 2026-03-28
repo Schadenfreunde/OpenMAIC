@@ -151,6 +151,8 @@ Return a JSON object with this exact structure:
         prompt: userPrompt,
       },
       'agent-profiles',
+      undefined,
+      { enabled: false }, // structured JSON output task — no reasoning needed
     );
 
     // ── Parse LLM response ──

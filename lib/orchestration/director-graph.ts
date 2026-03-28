@@ -64,11 +64,13 @@ const OrchestratorState = Annotation.Root({
   currentAgentId: Annotation<string | null>,
   turnCount: Annotation<number>,
   agentResponses: Annotation<AgentTurnSummary[]>({
-    reducer: (prev, update) => [...prev, ...update],
+    // Keep last 20 summaries to bound context size in long sessions
+    reducer: (prev, update) => [...prev, ...update].slice(-20),
     default: () => [],
   }),
   whiteboardLedger: Annotation<WhiteboardActionRecord[]>({
-    reducer: (prev, update) => [...prev, ...update],
+    // Keep last 50 actions to bound prompt size while preserving recent history
+    reducer: (prev, update) => [...prev, ...update].slice(-50),
     default: () => [],
   }),
   shouldEnd: Annotation<boolean>,

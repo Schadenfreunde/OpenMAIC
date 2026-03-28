@@ -274,8 +274,43 @@ export interface LLMRetryOptions {
 
 const DEFAULT_VALIDATE = (text: string) => text.trim().length > 0;
 
+/** Default per-attempt timeout for callLLM when no AbortSignal is provided */
+const DEFAULT_CALL_TIMEOUT_MS = 60_000;
+
+/**
+ * Build modified params with a self-correction hint prepended to the user prompt.
+ * Only modifies string prompts or the last text-based user message (skips vision content).
+ */
+function buildRetryParams<T extends GenerateTextParams>(params: T, hint: string): T {
+  const p = params as Record<string, unknown>;
+  const prefix = `[Retry note: ${hint}]\n\n`;
+
+  if (typeof p.prompt === 'string') {
+    return { ...params, prompt: `${prefix}${p.prompt}` } as T;
+  }
+  if (Array.isArray(p.messages)) {
+    const messages = [...(p.messages as Array<{ role: string; content: unknown }>)];
+    for (let i = messages.length - 1; i >= 0; i--) {
+      if (messages[i].role === 'user') {
+        const content = messages[i].content;
+        if (typeof content === 'string') {
+          messages[i] = { ...messages[i], content: `${prefix}${content}` };
+          return { ...params, messages } as T;
+        }
+        break; // Vision content (array) — don't modify
+      }
+    }
+  }
+  return params;
+}
+
 /**
  * Unified wrapper around `generateText`.
+ *
+ * Improvements over raw generateText:
+ * - Default 60s per-attempt timeout (via AbortSignal.timeout) when no signal is provided
+ * - Exponential backoff on 429 rate-limit errors (2s → 4s → 8s, up to 30s)
+ * - Self-correcting retries: failure hint prepended to user prompt on retry
  *
  * @param params - Same parameters as AI SDK's `generateText`
  * @param source - A short label for log grouping (e.g. 'scene-stream', 'pbl-chat')
@@ -295,12 +330,23 @@ export async function callLLM<T extends GenerateTextParams>(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   let lastResult: GenerateTextResult<any, any> | undefined;
   let lastError: unknown;
+  let retryHint = '';
 
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     try {
       // Resolve effective thinking config: per-call > global env > undefined
       const effectiveThinking = thinking ?? getGlobalThinkingConfig();
-      const injectedParams = injectProviderOptions(params, effectiveThinking);
+
+      // Apply self-correction hint to user prompt if this is a retry
+      const currentParams = retryHint ? buildRetryParams(params, retryHint) : params;
+
+      // Add a default per-attempt timeout if no AbortSignal was provided by the caller
+      const hasExternalSignal = !!(currentParams as Record<string, unknown>).abortSignal;
+      const paramsWithTimeout = hasExternalSignal
+        ? currentParams
+        : { ...currentParams, abortSignal: AbortSignal.timeout(DEFAULT_CALL_TIMEOUT_MS) };
+
+      const injectedParams = injectProviderOptions(paramsWithTimeout, effectiveThinking);
 
       // Wrap in thinkingContext so the custom fetch wrapper in providers.ts
       // can read the config and inject vendor-specific body params for
@@ -314,6 +360,8 @@ export async function callLLM<T extends GenerateTextParams>(
         log.warn(
           `[${source}] Validation failed (attempt ${attempt}/${maxAttempts}), ${attempt < maxAttempts ? 'retrying...' : 'giving up'}`,
         );
+        retryHint =
+          'Your previous response was empty or invalid. Please provide the requested output.';
         lastResult = result;
         continue;
       }
@@ -323,7 +371,31 @@ export async function callLLM<T extends GenerateTextParams>(
       lastError = error;
 
       if (attempt < maxAttempts) {
-        log.warn(`[${source}] Call failed (attempt ${attempt}/${maxAttempts}), retrying...`, error);
+        // Detect rate limiting (429) and apply exponential backoff before retrying
+        const is429 =
+          error instanceof Error &&
+          (error.message.includes('429') ||
+            error.message.toLowerCase().includes('rate limit') ||
+            error.message.toLowerCase().includes('too many requests'));
+
+        const backoffMs = is429 ? Math.min(2000 * Math.pow(2, attempt - 1), 30_000) : 0;
+
+        if (backoffMs > 0) {
+          log.warn(
+            `[${source}] Rate limited (attempt ${attempt}/${maxAttempts}), backing off ${backoffMs}ms...`,
+          );
+          await new Promise((r) => setTimeout(r, backoffMs));
+        } else {
+          log.warn(
+            `[${source}] Call failed (attempt ${attempt}/${maxAttempts}), retrying...`,
+            error,
+          );
+        }
+
+        retryHint =
+          error instanceof Error
+            ? `Previous attempt failed: ${error.message.substring(0, 100)}`
+            : 'Previous attempt failed.';
         continue;
       }
     }

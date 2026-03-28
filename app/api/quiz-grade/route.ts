@@ -62,6 +62,8 @@ ${commentPrompt ? `Grading guidance: ${commentPrompt}\n` : ''}Student answer: ${
         prompt: userPrompt,
       },
       'quiz-grade',
+      undefined,
+      { enabled: false }, // classification task — no reasoning needed
     );
 
     // Parse the LLM response as JSON

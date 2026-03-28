@@ -100,6 +100,8 @@ export async function POST(req: NextRequest) {
             maxOutputTokens: modelInfo?.outputWindow,
           },
           'scene-actions',
+          undefined,
+          { enabled: false }, // structured output task — thinking adds latency with no benefit
         );
         return result.text;
       }
@@ -111,6 +113,8 @@ export async function POST(req: NextRequest) {
           maxOutputTokens: modelInfo?.outputWindow,
         },
         'scene-actions',
+        undefined,
+        { enabled: false }, // structured output task — thinking adds latency with no benefit
       );
       return result.text;
     };
