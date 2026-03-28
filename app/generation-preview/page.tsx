@@ -661,7 +661,7 @@ function GenerationPreviewContent() {
         headers: getApiHeaders(),
         body: JSON.stringify({
           outline: firstOutline,
-          allOutlines: outlines,
+          allOutlines: outlines.map(({ id, title }: { id: string; title: string }) => ({ id, title })),
           pdfImages: currentSession.pdfImages,
           imageMapping,
           stageInfo,
@@ -690,7 +690,7 @@ function GenerationPreviewContent() {
         headers: getApiHeaders(),
         body: JSON.stringify({
           outline: contentData.effectiveOutline || firstOutline,
-          allOutlines: outlines,
+          allOutlines: outlines.map(({ id, title }: { id: string; title: string }) => ({ id, title })),
           content: contentData.content,
           stageId: stage.id,
           agents,

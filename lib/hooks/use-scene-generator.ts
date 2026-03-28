@@ -59,6 +59,11 @@ function getApiHeaders(): HeadersInit {
   };
 }
 
+/** Slim allOutlines to {id, title} to reduce payload — routes only use titles and IDs */
+function slimOutlines(outlines: SceneOutline[]): Pick<SceneOutline, 'id' | 'title'>[] {
+  return outlines.map(({ id, title }) => ({ id, title }));
+}
+
 /** Call POST /api/generate/scene-content (step 1) */
 async function fetchSceneContent(
   params: {
@@ -81,7 +86,7 @@ async function fetchSceneContent(
     const response = await fetch('/api/generate/scene-content', {
       method: 'POST',
       headers: getApiHeaders(),
-      body: JSON.stringify(params),
+      body: JSON.stringify({ ...params, allOutlines: slimOutlines(params.allOutlines) }),
       signal,
     });
 
@@ -116,7 +121,7 @@ async function fetchSceneActions(
     const response = await fetch('/api/generate/scene-actions', {
       method: 'POST',
       headers: getApiHeaders(),
-      body: JSON.stringify(params),
+      body: JSON.stringify({ ...params, allOutlines: slimOutlines(params.allOutlines) }),
       signal,
     });
 
@@ -475,7 +480,7 @@ export function useSceneGenerator(options: UseSceneGeneratorOptions = {}) {
         const contentResult = await fetchSceneContent(
           {
             outline,
-            allOutlines: state.outlines,
+            allOutlines: slimOutlines(state.outlines),
             stageId: state.stage.id,
             pdfImages: params.pdfImages,
             imageMapping: params.imageMapping,
@@ -502,7 +507,7 @@ export function useSceneGenerator(options: UseSceneGeneratorOptions = {}) {
         const actionsResult = await fetchSceneActions(
           {
             outline: contentResult.effectiveOutline || outline,
-            allOutlines: state.outlines,
+            allOutlines: slimOutlines(state.outlines),
             content: contentResult.content,
             stageId: state.stage.id,
             agents: params.agents,
