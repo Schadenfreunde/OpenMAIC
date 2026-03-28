@@ -77,19 +77,26 @@ async function fetchSceneContent(
   },
   signal?: AbortSignal,
 ): Promise<SceneContentResult> {
-  const response = await fetch('/api/generate/scene-content', {
-    method: 'POST',
-    headers: getApiHeaders(),
-    body: JSON.stringify(params),
-    signal,
-  });
+  try {
+    const response = await fetch('/api/generate/scene-content', {
+      method: 'POST',
+      headers: getApiHeaders(),
+      body: JSON.stringify(params),
+      signal,
+    });
 
-  if (!response.ok) {
-    const data = await response.json().catch(() => ({ error: 'Request failed' }));
-    return { success: false, error: data.error || `HTTP ${response.status}` };
+    if (!response.ok) {
+      const data = await response.json().catch(() => ({ error: 'Request failed' }));
+      return { success: false, error: data.error || `HTTP ${response.status}` };
+    }
+
+    return response.json();
+  } catch (error) {
+    // Re-throw abort so the generation loop can handle it
+    if (error instanceof DOMException && error.name === 'AbortError') throw error;
+    // Convert network errors to a failed result instead of crashing the loop
+    return { success: false, error: error instanceof Error ? error.message : 'Network error' };
   }
-
-  return response.json();
 }
 
 /** Call POST /api/generate/scene-actions (step 2) */
@@ -105,19 +112,24 @@ async function fetchSceneActions(
   },
   signal?: AbortSignal,
 ): Promise<SceneActionsResult> {
-  const response = await fetch('/api/generate/scene-actions', {
-    method: 'POST',
-    headers: getApiHeaders(),
-    body: JSON.stringify(params),
-    signal,
-  });
+  try {
+    const response = await fetch('/api/generate/scene-actions', {
+      method: 'POST',
+      headers: getApiHeaders(),
+      body: JSON.stringify(params),
+      signal,
+    });
 
-  if (!response.ok) {
-    const data = await response.json().catch(() => ({ error: 'Request failed' }));
-    return { success: false, error: data.error || `HTTP ${response.status}` };
+    if (!response.ok) {
+      const data = await response.json().catch(() => ({ error: 'Request failed' }));
+      return { success: false, error: data.error || `HTTP ${response.status}` };
+    }
+
+    return response.json();
+  } catch (error) {
+    if (error instanceof DOMException && error.name === 'AbortError') throw error;
+    return { success: false, error: error instanceof Error ? error.message : 'Network error' };
   }
-
-  return response.json();
 }
 
 /** Generate TTS for one speech action and store in IndexedDB */
