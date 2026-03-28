@@ -355,6 +355,13 @@ export async function callLLM<T extends GenerateTextParams>(
         generateText(injectedParams),
       );
 
+      // --- Cost tracking (fire-and-forget, fail-safe) ---
+      try {
+        // eslint-disable-next-line @typescript-eslint/no-require-imports
+        const { trackUsage } = require('@/lib/ai/cost-tracker');
+        trackUsage(getModelId(params), source, result.usage);
+      } catch { /* cost tracking failure is non-fatal */ }
+
       // Validate result (only when retries are configured)
       if (validate && !validate(result.text)) {
         log.warn(
@@ -429,6 +436,18 @@ export function streamLLM<T extends StreamTextParams>(
     effectiveThinking,
   );
   const result = thinkingContext.run(effectiveThinking, () => streamText(injectedParams));
+
+  // --- Cost tracking for streams (fire-and-forget, fail-safe) ---
+  try {
+    const modelId = getModelId(params);
+    result.usage.then((usage: Record<string, unknown>) => {
+      try {
+        // eslint-disable-next-line @typescript-eslint/no-require-imports
+        const { trackUsage } = require('@/lib/ai/cost-tracker');
+        trackUsage(modelId, source, usage);
+      } catch { /* non-fatal */ }
+    }).catch(() => { /* stream aborted or failed — ignore */ });
+  } catch { /* non-fatal */ }
 
   return result;
 }

@@ -110,14 +110,20 @@ An architectural audit was performed (March 2026) across six dimensions. Key fin
 | MEDIUM | `allOutlines` array sent to every scene-content and scene-actions call even though only the current outline is needed. | `page.tsx:664,693` |
 | MEDIUM | Full conversation history passed to all LangGraph agent nodes without truncation. | `lib/orchestration/director-graph.ts:292` |
 
-### Open Tasks (Phase 3 — Cost Intelligence)
+### Cost Tracking (Phase 3 — Implemented, Isolated)
 
-These require dedicated effort and are tracked here for future sprints:
+Token/cost tracking is now active but completely isolated from the core pipeline. If it has bugs, generation works identically.
 
-- **Add pricing metadata to model registry** — Extend `ModelInfo` in `lib/types/provider.ts` with `inputCostPer1MTokens` and `outputCostPer1MTokens`. Populate for major models in `lib/ai/providers.ts`.
-- **Log token usage** — Capture `result.usage` (inputTokens, outputTokens) in `callLLM()` and log/aggregate per source label.
+- **`lib/ai/cost-tracker.ts`** — Pricing table (~15 models), cost estimation, `trackUsage()` entry point. Called by `callLLM()` and `streamLLM()` via `require()` inside try-catch. Never throws, never blocks.
+- **`lib/store/cost-tracking.ts`** — Session-only Zustand store aggregating totals, per-source breakdown (e.g. 'scene-content', 'quiz-grade'), per-model breakdown, and a ring buffer of the last 50 records.
+- **Pricing data lives in `cost-tracker.ts`, NOT on `ModelInfo`** — This keeps core types decoupled. Update `MODEL_PRICING` when provider prices change.
+- **Viewing cost data**: In browser console: `require('@/lib/store/cost-tracking').useCostTrackingStore.getState()`. In terminal with `LOG_LEVEL=debug`, look for `[CostTracker]` log lines.
+
+### Open Tasks (Future)
+
 - **Task-based model routing** — Route quiz-grade, action formatting, and agent-profile generation to cheaper models (e.g., Haiku, Gemini Flash) while keeping generation on the user-selected model.
 - **Prompt caching for Anthropic** — Restructure system prompt passing to use the `messages` array format with `cacheControl: { type: 'ephemeral' }` on the system content block. Requires careful testing across all providers.
+- **Cost display in UI** — Surface the cost tracking store data in a dashboard or generation summary panel.
 
 ### Architecture Invariants (Don't Break)
 
